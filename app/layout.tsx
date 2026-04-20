@@ -1,62 +1,50 @@
-import type { Metadata } from "next";
-import { Space_Grotesk, JetBrains_Mono } from "next/font/google";
+import type { Metadata, Viewport } from "next";
+import Script from "next/script";
+
 import "./globals.css";
 
-const spaceGrotesk = Space_Grotesk({
-  subsets: ["latin"],
-  variable: "--font-sans"
-});
-
-const jetBrainsMono = JetBrains_Mono({
-  subsets: ["latin"],
-  variable: "--font-mono"
-});
-
 export const metadata: Metadata = {
+  metadataBase: new URL("https://supabase-db-visualizer.com"),
   title: {
     default: "Supabase DB Visualizer",
-    template: "%s | Supabase DB Visualizer"
+    template: "%s | Supabase DB Visualizer",
   },
   description:
-    "Paste a Supabase Postgres URL and get an instant ERD, schema browser, query explorer, and row count dashboard. Built for solo founders managing multiple databases.",
-  metadataBase: new URL("https://supabase-db-visualizer.example.com"),
+    "Paste a Supabase connection string and instantly inspect ERD, schema, row counts, and slow-query telemetry from one unified dashboard.",
+  applicationName: "Supabase DB Visualizer",
   keywords: [
     "Supabase",
     "database visualizer",
-    "ERD generator",
-    "Postgres explorer",
+    "ERD",
+    "SQL explorer",
     "schema browser",
-    "query explorer"
+    "row count dashboard",
   ],
   openGraph: {
     title: "Supabase DB Visualizer",
     description:
-      "Auto-generate ERDs, browse tables, run SQL safely, and inspect slow query activity across any Supabase Postgres URL.",
-    url: "https://supabase-db-visualizer.example.com",
+      "Cloud-native PostgreSQL explorer for founders running multiple Supabase projects.",
+    url: "https://supabase-db-visualizer.com",
     siteName: "Supabase DB Visualizer",
-    images: [
-      {
-        url: "https://supabase-db-visualizer.example.com/og.png",
-        width: 1200,
-        height: 630,
-        alt: "Supabase DB Visualizer dashboard preview"
-      }
-    ],
-    type: "website"
+    type: "website",
   },
   twitter: {
     card: "summary_large_image",
     title: "Supabase DB Visualizer",
     description:
-      "Universal cloud-native Supabase schema and SQL explorer for solo founders.",
-    images: ["https://supabase-db-visualizer.example.com/og.png"]
-  }
+      "Connect any Supabase database and generate ERD, schema maps, and query insights in seconds.",
+  },
 };
 
-export default function RootLayout({ children }: { children: React.ReactNode }) {
+export const viewport: Viewport = {
+  themeColor: "#0d1117",
+};
+
+export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
   return (
-    <html lang="en" className="dark">
-      <body className={`${spaceGrotesk.variable} ${jetBrainsMono.variable} antialiased`}>
+    <html lang="en">
+      <body>
+        <Script src="https://app.lemonsqueezy.com/js/lemon.js" strategy="afterInteractive" />
         {children}
       </body>
     </html>

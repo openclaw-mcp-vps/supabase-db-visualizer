@@ -1,61 +1,71 @@
-import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { z } from "zod";
-import { connectionStringFromCookies } from "@/lib/auth";
-import { executeReadOnlyQuery, fingerprintConnection } from "@/lib/db-client";
-import {
-  getCachedQuery,
-  setCachedQuery,
-  slowQueriesForConnection,
-  trackSlowQuery,
-  type QueryPayload
-} from "@/lib/query-cache";
+import { NextResponse } from "next/server";
+import { z, ZodError } from "zod";
 
-const bodySchema = z.object({
-  sql: z.string().min(6, "SQL is too short."),
-  limit: z.number().int().min(1).max(2000).default(300)
+import { hasPaidAccessFromCookieStore, type CookieReader } from "@/lib/auth";
+import {
+  executeCachedReadOnlyQuery,
+  getSlowQueryLog,
+  hashConnectionString,
+  readConnectionStringFromCookieStore,
+} from "@/lib/database";
+
+export const runtime = "nodejs";
+
+const queryPayloadSchema = z.object({
+  sql: z.string().min(1).max(20_000),
+  limit: z.number().int().min(1).max(500).optional(),
 });
 
-export async function POST(request: Request) {
-  const cookieStore = await cookies();
-  const connectionString = connectionStringFromCookies(cookieStore);
+export async function POST(request: Request): Promise<NextResponse> {
+  const cookieStore = (await cookies()) as CookieReader;
+
+  if (!hasPaidAccessFromCookieStore(cookieStore)) {
+    return NextResponse.json(
+      {
+        error: "Active subscription required before running queries.",
+      },
+      { status: 402 },
+    );
+  }
+
+  const connectionString = readConnectionStringFromCookieStore(cookieStore);
 
   if (!connectionString) {
-    return NextResponse.json({ ok: false, error: "Connect a database first." }, { status: 401 });
+    return NextResponse.json(
+      {
+        error: "No database connection found. Connect a Supabase project first.",
+      },
+      { status: 400 },
+    );
   }
 
   try {
-    const parsedBody = bodySchema.parse(await request.json());
-    const fingerprint = fingerprintConnection(connectionString);
-    const trimmedSql = parsedBody.sql.trim();
-
-    const cached = getCachedQuery(fingerprint, trimmedSql);
-    if (cached) {
-      return NextResponse.json({
-        ok: true,
-        result: cached,
-        slowQueries: slowQueriesForConnection(fingerprint)
-      });
-    }
-
-    const executed = await executeReadOnlyQuery(connectionString, trimmedSql, parsedBody.limit);
-
-    const payload: QueryPayload = {
-      ...executed,
-      cached: false,
-      executedAt: new Date().toISOString()
-    };
-
-    setCachedQuery(fingerprint, trimmedSql, payload);
-    trackSlowQuery(fingerprint, trimmedSql, payload.durationMs, payload.rowCount);
+    const payload = queryPayloadSchema.parse(await request.json());
+    const result = await executeCachedReadOnlyQuery(connectionString, payload.sql, payload.limit);
 
     return NextResponse.json({
-      ok: true,
-      result: payload,
-      slowQueries: slowQueriesForConnection(fingerprint)
+      result,
+      slowQueries: getSlowQueryLog(hashConnectionString(connectionString)),
     });
   } catch (error) {
+    if (error instanceof ZodError) {
+      return NextResponse.json(
+        {
+          error: "Invalid query request payload.",
+          details: error.flatten(),
+        },
+        { status: 400 },
+      );
+    }
+
     const message = error instanceof Error ? error.message : "Failed to run query.";
-    return NextResponse.json({ ok: false, error: message }, { status: 400 });
+
+    return NextResponse.json(
+      {
+        error: message,
+      },
+      { status: 400 },
+    );
   }
 }

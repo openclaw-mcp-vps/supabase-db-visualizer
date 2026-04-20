@@ -1,19 +1,22 @@
-import { cookies } from "next/headers";
-import { redirect } from "next/navigation";
 import type { Metadata } from "next";
+import { redirect } from "next/navigation";
+
 import { DashboardWorkspace } from "@/components/DashboardWorkspace";
-import { hasPaidAccess } from "@/lib/auth";
+import { hasPaidAccessFromServerCookies } from "@/lib/auth";
 
 export const metadata: Metadata = {
   title: "Dashboard",
-  description:
-    "Connect your Supabase/Postgres databases, inspect ERDs, browse schema, run SQL, and monitor slow-query activity."
+  description: "Interactive Supabase schema explorer and query workspace.",
+  robots: {
+    index: false,
+    follow: false,
+  },
 };
 
 export default async function DashboardPage() {
-  const cookieStore = await cookies();
+  const hasAccess = await hasPaidAccessFromServerCookies();
 
-  if (!hasPaidAccess(cookieStore)) {
+  if (!hasAccess) {
     redirect("/");
   }
 

@@ -1,36 +1,52 @@
-import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { connectionStringFromCookies } from "@/lib/auth";
-import { fingerprintConnection, introspectDatabase } from "@/lib/db-client";
-import { slowQueriesForConnection } from "@/lib/query-cache";
-import { parseIntrospection } from "@/lib/schema-parser";
+import { NextResponse } from "next/server";
 
-export async function GET() {
-  const cookieStore = await cookies();
-  const connectionString = connectionStringFromCookies(cookieStore);
+import { hasPaidAccessFromCookieStore, type CookieReader } from "@/lib/auth";
+import { fetchSchemaSnapshot, getSlowQueryLog, readConnectionStringFromCookieStore } from "@/lib/database";
+import { generateErdDiagram } from "@/lib/erd-generator";
+
+export const runtime = "nodejs";
+
+export async function GET(): Promise<NextResponse> {
+  const cookieStore = (await cookies()) as CookieReader;
+
+  if (!hasPaidAccessFromCookieStore(cookieStore)) {
+    return NextResponse.json(
+      {
+        error: "Active subscription required before using the explorer.",
+      },
+      { status: 402 },
+    );
+  }
+
+  const connectionString = readConnectionStringFromCookieStore(cookieStore);
 
   if (!connectionString) {
     return NextResponse.json(
       {
-        ok: false,
-        error: "No active database connection."
+        error: "No database connection found. Connect a Supabase project first.",
       },
-      { status: 401 }
+      { status: 400 },
     );
   }
 
   try {
-    const raw = await introspectDatabase(connectionString);
-    const parsed = parseIntrospection(raw);
-    const fingerprint = fingerprintConnection(connectionString);
+    const snapshot = await fetchSchemaSnapshot(connectionString);
+    const erd = generateErdDiagram(snapshot);
 
     return NextResponse.json({
-      ok: true,
-      schema: parsed,
-      slowQueries: slowQueriesForConnection(fingerprint)
+      schema: snapshot,
+      erd,
+      slowQueries: getSlowQueryLog(snapshot.connectionHash),
     });
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Failed to inspect schema.";
-    return NextResponse.json({ ok: false, error: message }, { status: 500 });
+    const message = error instanceof Error ? error.message : "Failed to load schema.";
+
+    return NextResponse.json(
+      {
+        error: message,
+      },
+      { status: 400 },
+    );
   }
 }

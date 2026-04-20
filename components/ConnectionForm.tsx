@@ -1,152 +1,94 @@
 "use client";
 
-import { type FormEvent, useState } from "react";
-import { CheckCircle2, Loader2, Plug, Unplug, XCircle } from "lucide-react";
+import { FormEvent, useState } from "react";
+import { Database, Loader2 } from "lucide-react";
 
-type ConnectionSummary = {
+export interface ConnectionDetails {
+  connectionHash: string;
   database: string;
-  schema: string;
-  version: string;
-  serverTime: string;
-};
+  serverVersion: string;
+  latencyMs: number;
+}
 
-type ConnectionFormProps = {
-  onConnected: () => Promise<void> | void;
-  onDisconnected: () => Promise<void> | void;
-};
+interface ConnectionFormProps {
+  onConnected: (connection: ConnectionDetails) => void;
+}
 
-export function ConnectionForm({ onConnected, onDisconnected }: ConnectionFormProps) {
+export function ConnectionForm({ onConnected }: ConnectionFormProps) {
   const [connectionString, setConnectionString] = useState("");
-  const [loading, setLoading] = useState(false);
-  const [error, setError] = useState<string | null>(null);
-  const [summary, setSummary] = useState<ConnectionSummary | null>(null);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [status, setStatus] = useState("");
+  const [error, setError] = useState("");
 
-  async function handleConnect(event: FormEvent<HTMLFormElement>) {
+  const handleSubmit = async (event: FormEvent<HTMLFormElement>) => {
     event.preventDefault();
 
-    if (!connectionString.trim()) {
-      setError("Paste your Supabase Postgres URL to connect.");
-      return;
-    }
-
-    setLoading(true);
-    setError(null);
+    setError("");
+    setStatus("");
+    setIsSubmitting(true);
 
     try {
       const response = await fetch("/api/connect", {
         method: "POST",
         headers: {
-          "Content-Type": "application/json"
+          "Content-Type": "application/json",
         },
-        body: JSON.stringify({ connectionString })
+        body: JSON.stringify({ connectionString }),
       });
 
       const payload = (await response.json()) as {
-        ok: boolean;
-        summary?: ConnectionSummary;
+        message?: string;
         error?: string;
+        connection?: ConnectionDetails;
       };
 
-      if (!response.ok || !payload.ok || !payload.summary) {
-        throw new Error(payload.error || "Connection failed.");
+      if (!response.ok || !payload.connection) {
+        setError(payload.error || "Could not establish database connection.");
+        return;
       }
 
-      setSummary(payload.summary);
-      await onConnected();
-    } catch (caught) {
-      setSummary(null);
-      setError(caught instanceof Error ? caught.message : "Connection failed.");
-    } finally {
-      setLoading(false);
-    }
-  }
-
-  async function handleDisconnect() {
-    setLoading(true);
-    setError(null);
-
-    try {
-      await fetch("/api/connect", { method: "DELETE" });
-      setSummary(null);
-      setConnectionString("");
-      await onDisconnected();
+      setStatus(payload.message || "Connection established.");
+      onConnected(payload.connection);
     } catch {
-      setError("Unable to disconnect right now.");
+      setError("Connection request failed. Verify your URL and network access.");
     } finally {
-      setLoading(false);
+      setIsSubmitting(false);
     }
-  }
+  };
 
   return (
-    <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)]/95 p-5 shadow-xl shadow-black/20">
-      <div className="mb-4 flex items-start justify-between gap-4">
-        <div>
-          <p className="text-sm uppercase tracking-[0.2em] text-[var(--text-secondary)]">Connection</p>
-          <h2 className="mt-1 text-xl font-semibold">Supabase Postgres URL</h2>
-          <p className="mt-2 text-sm text-[var(--text-secondary)]">
-            We keep credentials on the server in an encrypted, httpOnly cookie. Nothing is stored in localStorage.
-          </p>
-        </div>
+    <form onSubmit={handleSubmit} className="rounded-2xl border border-[#2c3a4f] bg-[#101827]/90 p-5">
+      <div className="mb-3 flex items-center gap-2">
+        <Database className="h-5 w-5 text-[#35c8ff]" />
+        <h2 className="text-lg font-semibold text-white">Connect Supabase Database</h2>
       </div>
-
-      <form onSubmit={handleConnect} className="space-y-3">
-        <label className="block text-sm font-medium text-[var(--text-secondary)]" htmlFor="connectionString">
-          Connection String
-        </label>
-        <input
-          id="connectionString"
-          autoComplete="off"
-          spellCheck={false}
-          value={connectionString}
-          onChange={(event) => setConnectionString(event.target.value)}
-          placeholder="postgresql://postgres:password@db.xxxxx.supabase.co:6543/postgres"
-          className="h-12 w-full rounded-lg border border-[var(--border)] bg-[#0f141c] px-4 text-sm text-[var(--text-primary)] placeholder:text-[#5f6b7a]"
-          type="password"
-        />
-
-        <div className="flex flex-wrap items-center gap-3">
-          <button
-            disabled={loading}
-            type="submit"
-            className="inline-flex h-11 items-center gap-2 rounded-lg bg-[var(--accent)] px-4 text-sm font-semibold text-white transition hover:bg-[var(--accent-soft)] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            {loading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Plug className="h-4 w-4" />}
-            Connect Database
-          </button>
-
-          <button
-            disabled={loading || !summary}
-            type="button"
-            onClick={handleDisconnect}
-            className="inline-flex h-11 items-center gap-2 rounded-lg border border-[var(--border)] px-4 text-sm font-semibold text-[var(--text-primary)] transition hover:bg-[#1d2430] disabled:cursor-not-allowed disabled:opacity-60"
-          >
-            <Unplug className="h-4 w-4" />
-            Disconnect
-          </button>
-        </div>
-      </form>
-
-      {error && (
-        <div className="mt-4 flex items-center gap-2 rounded-lg border border-[var(--danger)]/40 bg-[var(--danger)]/10 px-3 py-2 text-sm text-[#ff9c95]">
-          <XCircle className="h-4 w-4" />
-          {error}
-        </div>
-      )}
-
-      {summary && (
-        <div className="mt-4 rounded-lg border border-[var(--success)]/40 bg-[var(--success)]/10 p-3 text-sm text-[#a2f5ab]">
-          <p className="mb-2 inline-flex items-center gap-2 font-semibold">
-            <CheckCircle2 className="h-4 w-4" />
-            Connected successfully
-          </p>
-          <ul className="space-y-1 text-xs text-[#98dba0]">
-            <li>Database: {summary.database}</li>
-            <li>Default schema: {summary.schema}</li>
-            <li>Server time: {summary.serverTime}</li>
-            <li className="truncate">Version: {summary.version}</li>
-          </ul>
-        </div>
-      )}
-    </section>
+      <p className="mb-4 text-sm leading-relaxed text-[#9fb0c3]">
+        Paste the direct PostgreSQL connection URL from your Supabase project settings. The URL stays server-side and is
+        never exposed in browser storage.
+      </p>
+      <label htmlFor="connection-string" className="mb-2 block text-xs uppercase tracking-wide text-[#8fa5bb]">
+        Supabase PostgreSQL URL
+      </label>
+      <textarea
+        id="connection-string"
+        value={connectionString}
+        onChange={(event) => setConnectionString(event.target.value)}
+        placeholder="postgresql://postgres:[PASSWORD]@db.[PROJECT].supabase.co:5432/postgres"
+        className="min-h-28 w-full rounded-lg border border-[#2a3b4f] bg-[#0f1724] p-3 font-mono text-sm text-[#dce7f1] outline-none transition focus:border-[#35c8ff]"
+        required
+      />
+      <div className="mt-4 flex flex-wrap items-center gap-3">
+        <button
+          type="submit"
+          disabled={isSubmitting}
+          className="inline-flex items-center gap-2 rounded-lg bg-[#35c8ff] px-4 py-2 text-sm font-semibold text-[#052436] transition hover:bg-[#60d4ff] disabled:cursor-not-allowed disabled:bg-[#1e495a] disabled:text-[#8db5ca]"
+        >
+          {isSubmitting ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+          Test & Save Connection
+        </button>
+        {status ? <span className="text-xs text-[#8fd2a5]">{status}</span> : null}
+        {error ? <span className="text-xs text-[#f59ca2]">{error}</span> : null}
+      </div>
+    </form>
   );
 }

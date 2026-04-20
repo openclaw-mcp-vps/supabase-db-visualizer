@@ -1,133 +1,111 @@
-import crypto from "node:crypto";
+import { createHmac, timingSafeEqual } from "node:crypto";
 
-export const ACCESS_COOKIE_NAME = "sbv_paid";
-export const CONNECTION_COOKIE_NAME = "sbv_conn";
-export const CHECKOUT_COOKIE_NAME = "sbv_checkout";
+import { cookies } from "next/headers";
+import type { NextResponse } from "next/server";
 
-export const ACCESS_TTL_SECONDS = 60 * 60 * 24 * 31;
-export const CONNECTION_TTL_SECONDS = 60 * 60 * 12;
-export const CHECKOUT_TTL_SECONDS = 60 * 30;
-
-export type CookieStoreLike = {
+export interface CookieReader {
   get: (name: string) => { value: string } | undefined;
+}
+
+export const ACCESS_COOKIE_NAME = "sbv_access";
+const ACCESS_TTL_SECONDS = 60 * 60 * 24 * 30;
+
+type AccessTokenPayload = {
+  sessionId: string;
+  expiresAt: number;
 };
 
-function appSecret(): string {
-  return (
-    process.env.LEMON_SQUEEZY_WEBHOOK_SECRET ||
-    "local-dev-secret-change-this-before-production"
-  );
+function getSigningSecret(): string {
+  return process.env.LEMON_SQUEEZY_WEBHOOK_SECRET || "local-dev-signing-secret";
 }
 
-function hmac(value: string): string {
-  return crypto.createHmac("sha256", appSecret()).update(value).digest("base64url");
+function createSignature(value: string): string {
+  return createHmac("sha256", getSigningSecret()).update(value).digest("hex");
 }
 
-function timingSafeEqualString(a: string, b: string): boolean {
-  const aBuffer = Buffer.from(a);
-  const bBuffer = Buffer.from(b);
-  if (aBuffer.length !== bBuffer.length) {
+function safeEquals(a: string, b: string): boolean {
+  const left = Buffer.from(a);
+  const right = Buffer.from(b);
+
+  if (left.length !== right.length) {
     return false;
   }
 
-  return crypto.timingSafeEqual(aBuffer, bBuffer);
+  return timingSafeEqual(left, right);
 }
 
-function keyMaterial(): Buffer {
-  return crypto.createHash("sha256").update(appSecret()).digest();
+export function mintAccessToken(sessionId: string): string {
+  const payload: AccessTokenPayload = {
+    sessionId,
+    expiresAt: Date.now() + ACCESS_TTL_SECONDS * 1000,
+  };
+
+  const encodedPayload = Buffer.from(JSON.stringify(payload), "utf8").toString("base64url");
+  const signature = createSignature(encodedPayload);
+  return `${encodedPayload}.${signature}`;
 }
 
-export function defaultCookieSecurity() {
-  return {
+function parseAccessToken(token: string | undefined): AccessTokenPayload | null {
+  if (!token) {
+    return null;
+  }
+
+  const [encodedPayload, signature] = token.split(".");
+  if (!encodedPayload || !signature) {
+    return null;
+  }
+
+  if (!safeEquals(createSignature(encodedPayload), signature)) {
+    return null;
+  }
+
+  try {
+    const parsed = JSON.parse(Buffer.from(encodedPayload, "base64url").toString("utf8")) as AccessTokenPayload;
+
+    if (!parsed.sessionId || typeof parsed.expiresAt !== "number") {
+      return null;
+    }
+
+    if (parsed.expiresAt <= Date.now()) {
+      return null;
+    }
+
+    return parsed;
+  } catch {
+    return null;
+  }
+}
+
+export function hasPaidAccessFromCookieStore(cookieStore: CookieReader): boolean {
+  const token = cookieStore.get(ACCESS_COOKIE_NAME)?.value;
+  return Boolean(parseAccessToken(token));
+}
+
+export async function hasPaidAccessFromServerCookies(): Promise<boolean> {
+  const cookieStore = (await cookies()) as CookieReader;
+  return hasPaidAccessFromCookieStore(cookieStore);
+}
+
+export function applyPaidAccessCookie(response: NextResponse, sessionId: string): void {
+  response.cookies.set({
+    name: ACCESS_COOKIE_NAME,
+    value: mintAccessToken(sessionId),
     httpOnly: true,
     secure: process.env.NODE_ENV === "production",
-    sameSite: "lax" as const,
-    path: "/"
-  };
+    sameSite: "lax",
+    path: "/",
+    maxAge: ACCESS_TTL_SECONDS,
+  });
 }
 
-export function issueAccessCookieValue(): string {
-  const payload = {
-    scope: "pro",
-    exp: Date.now() + ACCESS_TTL_SECONDS * 1000
-  };
-
-  const encoded = Buffer.from(JSON.stringify(payload)).toString("base64url");
-  return `${encoded}.${hmac(encoded)}`;
-}
-
-export function hasPaidAccess(cookieStore: CookieStoreLike): boolean {
-  const raw = cookieStore.get(ACCESS_COOKIE_NAME)?.value;
-  if (!raw) {
-    return false;
-  }
-
-  const [encoded, signature] = raw.split(".");
-  if (!encoded || !signature || !timingSafeEqualString(signature, hmac(encoded))) {
-    return false;
-  }
-
-  try {
-    const payload = JSON.parse(Buffer.from(encoded, "base64url").toString("utf8")) as {
-      exp?: number;
-      scope?: string;
-    };
-
-    return payload.scope === "pro" && typeof payload.exp === "number" && payload.exp > Date.now();
-  } catch {
-    return false;
-  }
-}
-
-export function generateCheckoutSessionToken(): string {
-  return `${crypto.randomUUID()}-${crypto.randomBytes(10).toString("hex")}`;
-}
-
-export function encryptConnectionString(connectionString: string): string {
-  const iv = crypto.randomBytes(12);
-  const cipher = crypto.createCipheriv("aes-256-gcm", keyMaterial(), iv);
-  const encrypted = Buffer.concat([cipher.update(connectionString, "utf8"), cipher.final()]);
-  const tag = cipher.getAuthTag();
-
-  return `${iv.toString("base64url")}.${tag.toString("base64url")}.${encrypted.toString("base64url")}`;
-}
-
-export function decryptConnectionString(payload: string): string | null {
-  const parts = payload.split(".");
-  if (parts.length !== 3) {
-    return null;
-  }
-
-  const [ivPart, tagPart, encryptedPart] = parts;
-
-  try {
-    const iv = Buffer.from(ivPart, "base64url");
-    const tag = Buffer.from(tagPart, "base64url");
-    const encrypted = Buffer.from(encryptedPart, "base64url");
-
-    const decipher = crypto.createDecipheriv("aes-256-gcm", keyMaterial(), iv);
-    decipher.setAuthTag(tag);
-    const decrypted = Buffer.concat([decipher.update(encrypted), decipher.final()]);
-    return decrypted.toString("utf8");
-  } catch {
-    return null;
-  }
-}
-
-export function connectionStringFromCookies(cookieStore: CookieStoreLike): string | null {
-  const encrypted = cookieStore.get(CONNECTION_COOKIE_NAME)?.value;
-  if (!encrypted) {
-    return null;
-  }
-
-  return decryptConnectionString(encrypted);
-}
-
-export function verifyWebhookSignature(rawBody: string, signature: string | null): boolean {
-  if (!signature) {
-    return false;
-  }
-
-  const expected = crypto.createHmac("sha256", appSecret()).update(rawBody).digest("hex");
-  return timingSafeEqualString(expected, signature);
+export function clearPaidAccessCookie(response: NextResponse): void {
+  response.cookies.set({
+    name: ACCESS_COOKIE_NAME,
+    value: "",
+    httpOnly: true,
+    secure: process.env.NODE_ENV === "production",
+    sameSite: "lax",
+    path: "/",
+    maxAge: 0,
+  });
 }

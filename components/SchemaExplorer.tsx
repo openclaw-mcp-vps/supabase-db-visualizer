@@ -1,114 +1,105 @@
 "use client";
 
 import { useMemo, useState } from "react";
-import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
-import { Database, KeyRound, Search } from "lucide-react";
-import type { SchemaTable } from "@/lib/schema-parser";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis } from "recharts";
 
-type SchemaExplorerProps = {
-  tables: SchemaTable[];
-};
+import type { SchemaSnapshot } from "@/types/database";
 
-export function SchemaExplorer({ tables }: SchemaExplorerProps) {
-  const [query, setQuery] = useState("");
+interface SchemaExplorerProps {
+  snapshot: SchemaSnapshot;
+}
+
+export function SchemaExplorer({ snapshot }: SchemaExplorerProps) {
+  const [search, setSearch] = useState("");
 
   const filteredTables = useMemo(() => {
-    const normalized = query.trim().toLowerCase();
-    if (!normalized) {
-      return tables;
+    const searchTerm = search.trim().toLowerCase();
+
+    if (!searchTerm) {
+      return snapshot.tables;
     }
 
-    return tables.filter((table) => {
-      const tableMatch = table.fullName.toLowerCase().includes(normalized);
-      const columnMatch = table.columns.some((column) => column.name.toLowerCase().includes(normalized));
-      return tableMatch || columnMatch;
+    return snapshot.tables.filter((table) => {
+      const tableName = `${table.schema}.${table.name}`.toLowerCase();
+      return tableName.includes(searchTerm);
     });
-  }, [query, tables]);
+  }, [search, snapshot.tables]);
 
   const chartData = useMemo(() => {
-    return [...tables]
-      .sort((a, b) => b.rowEstimate - a.rowEstimate)
+    return [...snapshot.tables]
+      .sort((left, right) => right.rowCount - left.rowCount)
       .slice(0, 8)
       .map((table) => ({
-        name: table.name,
-        rows: table.rowEstimate
+        name: `${table.schema}.${table.name}`,
+        rowCount: table.rowCount,
       }));
-  }, [tables]);
+  }, [snapshot.tables]);
 
   return (
-    <section className="rounded-2xl border border-[var(--border)] bg-[var(--surface)] p-5 shadow-xl shadow-black/20">
-      <div className="mb-3 flex flex-wrap items-center justify-between gap-3">
-        <div>
-          <p className="text-xs uppercase tracking-[0.2em] text-[var(--text-secondary)]">Schema Browser</p>
-          <h3 className="mt-1 text-lg font-semibold">Tables, Columns, and Row Estimates</h3>
+    <section className="rounded-2xl border border-[#29374d] bg-[#101827]/90 p-5">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <h2 className="text-lg font-semibold text-white">Schema Explorer</h2>
+        <span className="text-xs text-[#8ea5bc]">
+          {snapshot.tables.length} tables • {snapshot.foreignKeys.length} foreign keys
+        </span>
+      </div>
+
+      <div className="mt-4 rounded-lg border border-[#27354a] bg-[#0f1826] p-3">
+        <p className="mb-2 text-xs uppercase tracking-wide text-[#7f96ad]">Largest Tables by Estimated Rows</p>
+        <div className="h-44 w-full">
+          <ResponsiveContainer>
+            <BarChart data={chartData} margin={{ top: 4, right: 10, left: -10, bottom: 0 }}>
+              <CartesianGrid strokeDasharray="3 3" stroke="#223247" />
+              <XAxis dataKey="name" tick={{ fill: "#91a7bd", fontSize: 10 }} interval={0} angle={-18} height={55} />
+              <Tooltip
+                contentStyle={{
+                  background: "#111a29",
+                  borderColor: "#2a3a50",
+                  color: "#d8e6f4",
+                }}
+                formatter={(value: number) => value.toLocaleString()}
+              />
+              <Bar dataKey="rowCount" fill="#35c8ff" radius={[4, 4, 0, 0]} />
+            </BarChart>
+          </ResponsiveContainer>
         </div>
-
-        <label className="relative block w-full max-w-xs">
-          <Search className="pointer-events-none absolute left-3 top-3.5 h-4 w-4 text-[var(--text-secondary)]" />
-          <input
-            value={query}
-            onChange={(event) => setQuery(event.target.value)}
-            placeholder="Search tables or columns"
-            className="h-11 w-full rounded-lg border border-[var(--border)] bg-[#0f141c] pl-10 pr-3 text-sm text-[var(--text-primary)] placeholder:text-[#5f6b7a]"
-          />
-        </label>
       </div>
 
-      <div className="mb-5 h-52 rounded-lg border border-[var(--border)] bg-[#0f141c] px-3 py-2">
-        <p className="mb-2 text-xs text-[var(--text-secondary)]">Top tables by estimated row count</p>
-        <ResponsiveContainer width="100%" height="100%">
-          <BarChart data={chartData} margin={{ top: 8, right: 12, left: -20, bottom: 0 }}>
-            <CartesianGrid strokeDasharray="3 3" stroke="#1f2732" />
-            <XAxis dataKey="name" stroke="#7d8897" tick={{ fontSize: 11 }} />
-            <YAxis stroke="#7d8897" tick={{ fontSize: 11 }} />
-            <Tooltip
-              contentStyle={{
-                background: "#161b22",
-                border: "1px solid #30363d",
-                borderRadius: "10px",
-                color: "#f0f6fc"
-              }}
-            />
-            <Bar dataKey="rows" fill="#2f81f7" radius={[6, 6, 0, 0]} />
-          </BarChart>
-        </ResponsiveContainer>
-      </div>
+      <label htmlFor="table-search" className="mt-4 block text-xs uppercase tracking-wide text-[#7f96ad]">
+        Filter Tables
+      </label>
+      <input
+        id="table-search"
+        type="text"
+        value={search}
+        onChange={(event) => setSearch(event.target.value)}
+        placeholder="public.users"
+        className="mt-2 w-full rounded-lg border border-[#2a3b4e] bg-[#0f1724] px-3 py-2 text-sm text-[#dce8f4] outline-none transition focus:border-[#35c8ff]"
+      />
 
-      <div className="max-h-[420px] space-y-3 overflow-y-auto pr-1">
+      <div className="mt-4 max-h-[500px] space-y-3 overflow-auto pr-1">
         {filteredTables.map((table) => (
-          <article key={table.id} className="rounded-lg border border-[var(--border)] bg-[#0f141c] p-3">
-            <div className="mb-2 flex flex-wrap items-center justify-between gap-2">
-              <h4 className="inline-flex items-center gap-2 text-sm font-semibold text-[var(--text-primary)]">
-                <Database className="h-4 w-4 text-[#2f81f7]" />
-                {table.fullName}
-              </h4>
-              <span className="text-xs text-[var(--text-secondary)]">
-                {table.rowEstimate.toLocaleString()} estimated rows
-              </span>
+          <article key={`${table.schema}.${table.name}`} className="rounded-lg border border-[#263549] bg-[#0f1725] p-3">
+            <div className="flex items-start justify-between gap-3">
+              <h3 className="font-mono text-sm font-semibold text-[#e5eef7]">{table.schema}.{table.name}</h3>
+              <span className="text-xs text-[#8aa3bc]">~{table.rowCount.toLocaleString()} rows</span>
             </div>
-
-            <ul className="space-y-1 text-xs text-[var(--text-secondary)]">
-              {table.columns.map((column) => (
-                <li key={`${table.id}-${column.name}`} className="flex flex-wrap items-center gap-2">
-                  <span className="font-medium text-[var(--text-primary)]">{column.name}</span>
-                  <span>{column.dataType}</span>
-                  {column.isPrimaryKey ? (
-                    <span className="inline-flex items-center gap-1 rounded bg-[#1b2d47] px-1.5 py-0.5 text-[#7cb4ff]">
-                      <KeyRound className="h-3 w-3" /> PK
-                    </span>
-                  ) : null}
-                  <span>{column.nullable ? "nullable" : "required"}</span>
-                </li>
+            <div className="mt-2 grid gap-1">
+              {table.columns.slice(0, 10).map((column) => (
+                <p key={`${table.schema}.${table.name}.${column.name}`} className="font-mono text-xs text-[#9db1c6]">
+                  <span className="text-[#d6e4f2]">{column.name}</span>: {column.dataType}
+                  {column.isPrimaryKey ? " [pk]" : ""}
+                  {column.nullable ? "" : " [not null]"}
+                </p>
               ))}
-            </ul>
+              {table.columns.length > 10 ? (
+                <p className="text-xs text-[#7790a7]">+{table.columns.length - 10} additional columns</p>
+              ) : null}
+            </div>
           </article>
         ))}
 
-        {filteredTables.length === 0 && (
-          <div className="rounded-lg border border-[var(--border)] bg-[#0f141c] px-4 py-5 text-sm text-[var(--text-secondary)]">
-            No tables matched "{query}".
-          </div>
-        )}
+        {!filteredTables.length ? <p className="text-sm text-[#8ea5bc]">No tables matched this filter.</p> : null}
       </div>
     </section>
   );

@@ -20,14 +20,15 @@ PLANNED FILES:
 - app/api/schema/route.ts
 - app/api/query/route.ts
 - components/ConnectionForm.tsx
-- components/ERDViewer.tsx
+- components/ERDDiagram.tsx
 - components/SchemaExplorer.tsx
 - components/QueryEditor.tsx
-- lib/db-client.ts
-- lib/schema-parser.ts
+- lib/database.ts
+- lib/erd-generator.ts
 - lib/auth.ts
+- lib/subscription.ts
 
-DEPENDENCIES: next, tailwindcss, pg, @types/pg, vis-network, react-ace, next-auth, lemonsqueezy.js, zod, lucide-react, recharts
+DEPENDENCIES: next, react, tailwindcss, pg, vis-network, monaco-editor, next-auth, lemonsqueezy.js, zod, lucide-react, recharts
 
 REQUIREMENTS:
 - Next.js 15 with App Router (app/ directory)

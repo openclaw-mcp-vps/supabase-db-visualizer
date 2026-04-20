@@ -1,66 +1,60 @@
-import { NextResponse } from "next/server";
 import { cookies } from "next/headers";
-import { z } from "zod";
-import {
-  CONNECTION_STRING_SCHEMA,
-  fingerprintConnection,
-  testConnection
-} from "@/lib/db-client";
-import {
-  CONNECTION_COOKIE_NAME,
-  CONNECTION_TTL_SECONDS,
-  connectionStringFromCookies,
-  defaultCookieSecurity,
-  encryptConnectionString
-} from "@/lib/auth";
-import { resetConnectionCache } from "@/lib/query-cache";
+import { NextResponse } from "next/server";
+import { ZodError } from "zod";
 
-const bodySchema = z.object({
-  connectionString: CONNECTION_STRING_SCHEMA
-});
+import { hasPaidAccessFromCookieStore, type CookieReader } from "@/lib/auth";
+import {
+  normalizeConnectionString,
+  parseConnectPayload,
+  setConnectionCookies,
+  testConnection,
+} from "@/lib/database";
 
-export async function POST(request: Request) {
+export const runtime = "nodejs";
+
+export async function POST(request: Request): Promise<NextResponse> {
+  const cookieStore = (await cookies()) as CookieReader;
+
+  if (!hasPaidAccessFromCookieStore(cookieStore)) {
+    return NextResponse.json(
+      {
+        error: "Active subscription required before connecting a database.",
+      },
+      { status: 402 },
+    );
+  }
+
   try {
-    const json = await request.json();
-    const { connectionString } = bodySchema.parse(json);
-
-    const summary = await testConnection(connectionString);
+    const payload = parseConnectPayload(await request.json());
+    const normalizedConnectionString = normalizeConnectionString(payload.connectionString);
+    const testResult = await testConnection(normalizedConnectionString);
 
     const response = NextResponse.json({
       ok: true,
-      summary
+      message: "Database connection is valid.",
+      connection: testResult,
     });
 
-    response.cookies.set({
-      ...defaultCookieSecurity(),
-      name: CONNECTION_COOKIE_NAME,
-      value: encryptConnectionString(connectionString),
-      maxAge: CONNECTION_TTL_SECONDS
-    });
-
+    setConnectionCookies(response, normalizedConnectionString);
     return response;
   } catch (error) {
-    const message = error instanceof Error ? error.message : "Connection failed.";
-    return NextResponse.json({ ok: false, error: message }, { status: 400 });
+    if (error instanceof ZodError) {
+      return NextResponse.json(
+        {
+          error: "Invalid request payload.",
+          details: error.flatten(),
+        },
+        { status: 400 },
+      );
+    }
+
+    const message = error instanceof Error ? error.message : "Failed to connect to database.";
+
+    return NextResponse.json(
+      {
+        error: message,
+      },
+      { status: 400 },
+    );
   }
-}
-
-export async function DELETE() {
-  const cookieStore = await cookies();
-  const currentConnection = connectionStringFromCookies(cookieStore);
-
-  if (currentConnection) {
-    resetConnectionCache(fingerprintConnection(currentConnection));
-  }
-
-  const response = NextResponse.json({ ok: true });
-
-  response.cookies.set({
-    ...defaultCookieSecurity(),
-    name: CONNECTION_COOKIE_NAME,
-    value: "",
-    maxAge: 0
-  });
-
-  return response;
 }
