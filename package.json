@@ -1,0 +1,34 @@
+{
+  "name": "supabase-db-visualizer",
+  "version": "1.0.0",
+  "private": true,
+  "scripts": {
+    "dev": "next dev",
+    "build": "next build",
+    "start": "next start",
+    "lint": "next lint"
+  },
+  "dependencies": {
+    "@tailwindcss/postcss": "^4.1.7",
+    "ace-builds": "^1.43.4",
+    "lemonsqueezy.js": "npm:@lemonsqueezy/lemonsqueezy.js@^4.0.0",
+    "lucide-react": "^0.511.0",
+    "next": "^15.5.15",
+    "next-auth": "^4.24.14",
+    "pg": "^8.16.3",
+    "react": "^19.2.0",
+    "react-ace": "^14.0.1",
+    "react-dom": "^19.2.0",
+    "recharts": "^3.2.1",
+    "tailwindcss": "^4.1.7",
+    "vis-network": "^10.0.2",
+    "zod": "^4.1.12"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.21",
+    "@types/pg": "^8.15.4",
+    "@types/react": "^19.2.2",
+    "@types/react-dom": "^19.2.2",
+    "typescript": "^5.8.3"
+  }
+}
