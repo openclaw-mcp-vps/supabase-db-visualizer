@@ -1,52 +1,40 @@
-import type { Metadata, Viewport } from "next";
-import Script from "next/script";
-
+import type { ReactNode } from "react";
+import type { Metadata } from "next";
 import "./globals.css";
 
 export const metadata: Metadata = {
-  metadataBase: new URL("https://supabase-db-visualizer.com"),
-  title: {
-    default: "Supabase DB Visualizer",
-    template: "%s | Supabase DB Visualizer",
-  },
+  metadataBase: new URL("https://supabase-db-visualizer.example.com"),
+  title: "Supabase DB Visualizer | ERD, Schema Explorer, and Query Insights",
   description:
-    "Paste a Supabase connection string and instantly inspect ERD, schema, row counts, and slow-query telemetry from one unified dashboard.",
-  applicationName: "Supabase DB Visualizer",
-  keywords: [
-    "Supabase",
-    "database visualizer",
-    "ERD",
-    "SQL explorer",
-    "schema browser",
-    "row count dashboard",
-  ],
+    "Paste a Supabase connection string and instantly inspect ERDs, schema health, row counts, and slow queries from one cloud-native dashboard.",
   openGraph: {
     title: "Supabase DB Visualizer",
     description:
-      "Cloud-native PostgreSQL explorer for founders running multiple Supabase projects.",
-    url: "https://supabase-db-visualizer.com",
-    siteName: "Supabase DB Visualizer",
+      "Cloud-native Supabase schema visualizer with ERD, query runner, and slow-query log for solo founders managing multiple projects.",
     type: "website",
+    url: "https://supabase-db-visualizer.example.com",
+    siteName: "Supabase DB Visualizer"
   },
   twitter: {
     card: "summary_large_image",
     title: "Supabase DB Visualizer",
     description:
-      "Connect any Supabase database and generate ERD, schema maps, and query insights in seconds.",
+      "Paste connection string. Get ERD, schema browser, row counts, and query diagnostics in under a minute."
   },
+  robots: {
+    index: true,
+    follow: true
+  }
 };
 
-export const viewport: Viewport = {
-  themeColor: "#0d1117",
-};
-
-export default function RootLayout({ children }: Readonly<{ children: React.ReactNode }>) {
+export default function RootLayout({
+  children
+}: Readonly<{
+  children: ReactNode;
+}>) {
   return (
     <html lang="en">
-      <body>
-        <Script src="https://app.lemonsqueezy.com/js/lemon.js" strategy="afterInteractive" />
-        {children}
-      </body>
+      <body>{children}</body>
     </html>
   );
 }

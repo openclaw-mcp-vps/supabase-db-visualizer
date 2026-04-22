@@ -1,71 +1,88 @@
-import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { z, ZodError } from "zod";
-
-import { hasPaidAccessFromCookieStore, type CookieReader } from "@/lib/auth";
-import {
-  executeCachedReadOnlyQuery,
-  getSlowQueryLog,
-  hashConnectionString,
-  readConnectionStringFromCookieStore,
-} from "@/lib/database";
 
 export const runtime = "nodejs";
 
-const queryPayloadSchema = z.object({
-  sql: z.string().min(1).max(20_000),
-  limit: z.number().int().min(1).max(500).optional(),
-});
+import { withDbClient } from "@/lib/db-client";
+import type { QueryExecution } from "@/lib/types";
 
-export async function POST(request: Request): Promise<NextResponse> {
-  const cookieStore = (await cookies()) as CookieReader;
+type QueryBody = {
+  connectionString?: unknown;
+  sql?: unknown;
+};
 
-  if (!hasPaidAccessFromCookieStore(cookieStore)) {
-    return NextResponse.json(
-      {
-        error: "Active subscription required before running queries.",
-      },
-      { status: 402 },
-    );
+const SAFE_QUERY_PATTERN = /^(select|with|explain)\b/i;
+
+function badRequest(message: string) {
+  return NextResponse.json({ error: message }, { status: 400 });
+}
+
+function normalizeSql(sql: string) {
+  const normalized = sql.trim();
+  return normalized.endsWith(";") ? normalized.slice(0, -1) : normalized;
+}
+
+function enforceLimit(sql: string) {
+  if (/^explain\b/i.test(sql)) {
+    return sql;
   }
 
-  const connectionString = readConnectionStringFromCookieStore(cookieStore);
-
-  if (!connectionString) {
-    return NextResponse.json(
-      {
-        error: "No database connection found. Connect a Supabase project first.",
-      },
-      { status: 400 },
-    );
+  if (/\blimit\s+\d+\b/i.test(sql)) {
+    return sql;
   }
+
+  return `${sql}\nLIMIT 200`;
+}
+
+export async function POST(request: Request) {
+  let body: QueryBody;
 
   try {
-    const payload = queryPayloadSchema.parse(await request.json());
-    const result = await executeCachedReadOnlyQuery(connectionString, payload.sql, payload.limit);
+    body = (await request.json()) as QueryBody;
+  } catch {
+    return badRequest("Request body must be valid JSON.");
+  }
 
-    return NextResponse.json({
-      result,
-      slowQueries: getSlowQueryLog(hashConnectionString(connectionString)),
+  if (typeof body.connectionString !== "string") {
+    return badRequest("`connectionString` is required.");
+  }
+
+  if (typeof body.sql !== "string") {
+    return badRequest("`sql` is required.");
+  }
+
+  const rawSql = normalizeSql(body.sql);
+
+  if (!rawSql) {
+    return badRequest("SQL query cannot be empty.");
+  }
+
+  if (!SAFE_QUERY_PATTERN.test(rawSql)) {
+    return badRequest("Only SELECT, WITH, and EXPLAIN statements are allowed.");
+  }
+
+  const executableSql = enforceLimit(rawSql);
+
+  try {
+    const result = await withDbClient(body.connectionString, async (client) => {
+      const startedAt = performance.now();
+      const queryResult = await client.query(executableSql);
+      const durationMs = Number((performance.now() - startedAt).toFixed(2));
+
+      const payload: QueryExecution = {
+        executedSql: executableSql,
+        columns: queryResult.fields.map((field) => field.name),
+        rows: queryResult.rows,
+        rowCount: queryResult.rowCount ?? queryResult.rows.length,
+        durationMs,
+        isSlowQuery: durationMs >= 750
+      };
+
+      return payload;
     });
+
+    return NextResponse.json({ ok: true, result });
   } catch (error) {
-    if (error instanceof ZodError) {
-      return NextResponse.json(
-        {
-          error: "Invalid query request payload.",
-          details: error.flatten(),
-        },
-        { status: 400 },
-      );
-    }
-
-    const message = error instanceof Error ? error.message : "Failed to run query.";
-
-    return NextResponse.json(
-      {
-        error: message,
-      },
-      { status: 400 },
-    );
+    const message = error instanceof Error ? error.message : "Failed to execute query.";
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

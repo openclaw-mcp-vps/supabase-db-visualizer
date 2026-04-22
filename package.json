@@ -1,35 +1,35 @@
 {
   "name": "supabase-db-visualizer",
-  "version": "0.1.0",
+  "version": "1.0.0",
   "private": true,
   "scripts": {
     "dev": "next dev",
     "build": "next build",
-    "start": "next start",
-    "lint": "next lint",
-    "typecheck": "tsc --noEmit"
+    "start": "next start"
   },
   "dependencies": {
     "@lemonsqueezy/lemonsqueezy.js": "^4.0.0",
-    "@monaco-editor/react": "^4.7.0",
     "@tailwindcss/postcss": "^4.1.11",
-    "lucide-react": "^0.542.0",
-    "monaco-editor": "^0.53.0",
-    "next": "^15.5.2",
-    "next-auth": "^5.0.0-beta.31",
-    "pg": "^8.16.3",
-    "react": "^19.1.1",
-    "react-dom": "^19.1.1",
+    "class-variance-authority": "^0.7.1",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.511.0",
+    "monaco-editor": "^0.52.2",
+    "next": "^15.3.3",
+    "next-auth": "^5.0.0-beta.30",
+    "pg": "^8.16.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "reactflow": "^11.11.4",
     "recharts": "^2.15.4",
-    "tailwindcss": "^4.1.11",
-    "vis-network": "^10.0.2",
-    "zod": "^3.25.76"
+    "sql-formatter": "^15.6.6",
+    "tailwind-merge": "^3.3.1",
+    "tailwindcss": "^4.1.11"
   },
   "devDependencies": {
-    "@types/node": "^24.2.1",
-    "@types/pg": "^8.15.6",
-    "@types/react": "^19.1.9",
-    "@types/react-dom": "^19.1.7",
-    "typescript": "^5.9.2"
+    "@types/node": "^22.15.21",
+    "@types/pg": "^8.15.2",
+    "@types/react": "^19.1.6",
+    "@types/react-dom": "^19.1.5",
+    "typescript": "^5.8.3"
   }
 }

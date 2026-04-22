@@ -1,60 +1,72 @@
-import { cookies } from "next/headers";
 import { NextResponse } from "next/server";
-import { ZodError } from "zod";
-
-import { hasPaidAccessFromCookieStore, type CookieReader } from "@/lib/auth";
-import {
-  normalizeConnectionString,
-  parseConnectPayload,
-  setConnectionCookies,
-  testConnection,
-} from "@/lib/database";
 
 export const runtime = "nodejs";
 
-export async function POST(request: Request): Promise<NextResponse> {
-  const cookieStore = (await cookies()) as CookieReader;
+import { withDbClient } from "@/lib/db-client";
+import type { ConnectionSummary } from "@/lib/types";
 
-  if (!hasPaidAccessFromCookieStore(cookieStore)) {
-    return NextResponse.json(
-      {
-        error: "Active subscription required before connecting a database.",
-      },
-      { status: 402 },
-    );
+type ConnectBody = {
+  connectionString?: unknown;
+};
+
+function badRequest(message: string) {
+  return NextResponse.json({ error: message }, { status: 400 });
+}
+
+export async function POST(request: Request) {
+  let body: ConnectBody;
+
+  try {
+    body = (await request.json()) as ConnectBody;
+  } catch {
+    return badRequest("Request body must be valid JSON.");
+  }
+
+  if (typeof body.connectionString !== "string") {
+    return badRequest("`connectionString` is required.");
   }
 
   try {
-    const payload = parseConnectPayload(await request.json());
-    const normalizedConnectionString = normalizeConnectionString(payload.connectionString);
-    const testResult = await testConnection(normalizedConnectionString);
+    const summary = await withDbClient(body.connectionString, async (client) => {
+      const [identityResult, countResult] = await Promise.all([
+        client.query<{
+          database_name: string;
+          current_role: string;
+          server_version: string;
+        }>(
+          `
+          SELECT
+            current_database() AS database_name,
+            current_user AS current_role,
+            split_part(version(), ',', 1) AS server_version
+          `
+        ),
+        client.query<{ table_count: string }>(
+          `
+          SELECT COUNT(*)::text AS table_count
+          FROM information_schema.tables
+          WHERE table_type = 'BASE TABLE'
+            AND table_schema NOT IN ('pg_catalog', 'information_schema')
+          `
+        )
+      ]);
 
-    const response = NextResponse.json({
-      ok: true,
-      message: "Database connection is valid.",
-      connection: testResult,
+      const identity = identityResult.rows[0];
+      const tableCount = Number(countResult.rows[0]?.table_count ?? "0");
+
+      const payload: ConnectionSummary = {
+        database: identity.database_name,
+        user: identity.current_role,
+        postgresVersion: identity.server_version,
+        tableCount: Number.isFinite(tableCount) ? tableCount : 0
+      };
+
+      return payload;
     });
 
-    setConnectionCookies(response, normalizedConnectionString);
-    return response;
+    return NextResponse.json({ ok: true, summary });
   } catch (error) {
-    if (error instanceof ZodError) {
-      return NextResponse.json(
-        {
-          error: "Invalid request payload.",
-          details: error.flatten(),
-        },
-        { status: 400 },
-      );
-    }
-
     const message = error instanceof Error ? error.message : "Failed to connect to database.";
-
-    return NextResponse.json(
-      {
-        error: message,
-      },
-      { status: 400 },
-    );
+    return NextResponse.json({ error: message }, { status: 500 });
   }
 }

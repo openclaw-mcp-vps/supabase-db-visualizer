@@ -1,157 +1,215 @@
 "use client";
 
-import { useState } from "react";
-import Editor from "@monaco-editor/react";
-import { Loader2, Play } from "lucide-react";
+import { useEffect, useMemo, useState } from "react";
+import { Bar, BarChart, CartesianGrid, ResponsiveContainer, Tooltip, XAxis, YAxis } from "recharts";
+import { format } from "sql-formatter";
 
-import type { QueryExecutionResult, SlowQueryRecord } from "@/types/database";
+import { Badge } from "@/components/ui/badge";
+import { Button } from "@/components/ui/button";
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from "@/components/ui/card";
+import { Table, TableBody, TableCell, TableHead, TableHeader, TableRow } from "@/components/ui/table";
+import { Textarea } from "@/components/ui/textarea";
+import type { QueryExecution } from "@/lib/types";
 
-interface QueryEditorProps {
-  onSlowQueriesUpdate: (slowQueries: SlowQueryRecord[]) => void;
-}
+const STORAGE_KEY = "sbv-slow-query-log";
 
-function formatCell(value: unknown): string {
-  if (value === null || value === undefined) {
-    return "null";
-  }
+type SlowQueryLog = {
+  sql: string;
+  durationMs: number;
+  recordedAt: string;
+};
 
-  if (typeof value === "object") {
-    return JSON.stringify(value);
-  }
+type QueryEditorProps = {
+  connectionString: string;
+};
 
-  return String(value);
-}
-
-export function QueryEditor({ onSlowQueriesUpdate }: QueryEditorProps) {
+export default function QueryEditor({ connectionString }: QueryEditorProps) {
   const [sql, setSql] = useState(
-    "SELECT table_schema, table_name, table_type\nFROM information_schema.tables\nWHERE table_schema NOT IN ('information_schema', 'pg_catalog')\nORDER BY table_schema, table_name;",
+    "SELECT table_schema, table_name, n_live_tup\nFROM pg_stat_user_tables\nORDER BY n_live_tup DESC;"
   );
-  const [limit, setLimit] = useState(200);
-  const [result, setResult] = useState<QueryExecutionResult | null>(null);
-  const [error, setError] = useState("");
-  const [isLoading, setIsLoading] = useState(false);
+  const [isRunning, setIsRunning] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+  const [result, setResult] = useState<QueryExecution | null>(null);
+  const [slowQueryLog, setSlowQueryLog] = useState<SlowQueryLog[]>([]);
 
-  const runQuery = async () => {
-    setError("");
-    setIsLoading(true);
+  useEffect(() => {
+    try {
+      const saved = window.localStorage.getItem(STORAGE_KEY);
+      if (saved) {
+        const parsed = JSON.parse(saved) as SlowQueryLog[];
+        setSlowQueryLog(parsed.slice(0, 12));
+      }
+    } catch {
+      setSlowQueryLog([]);
+    }
+  }, []);
+
+  useEffect(() => {
+    window.localStorage.setItem(STORAGE_KEY, JSON.stringify(slowQueryLog));
+  }, [slowQueryLog]);
+
+  const chartData = useMemo(() => {
+    return [...slowQueryLog]
+      .slice(0, 8)
+      .reverse()
+      .map((entry, index) => ({
+        name: `Q${index + 1}`,
+        durationMs: entry.durationMs
+      }));
+  }, [slowQueryLog]);
+
+  async function runQuery() {
+    if (!sql.trim()) {
+      setError("Write a SQL statement before running.");
+      return;
+    }
+
+    setIsRunning(true);
+    setError(null);
 
     try {
       const response = await fetch("/api/query", {
         method: "POST",
         headers: {
-          "Content-Type": "application/json",
+          "Content-Type": "application/json"
         },
-        body: JSON.stringify({ sql, limit }),
+        body: JSON.stringify({
+          connectionString,
+          sql
+        })
       });
 
       const payload = (await response.json()) as {
+        ok?: boolean;
         error?: string;
-        result?: QueryExecutionResult;
-        slowQueries?: SlowQueryRecord[];
+        result?: QueryExecution;
       };
 
-      if (!response.ok || !payload.result) {
-        setError(payload.error || "Unable to execute query.");
-        return;
+      if (!response.ok || !payload.ok || !payload.result) {
+        throw new Error(payload.error ?? "Failed to run query.");
       }
 
       setResult(payload.result);
-      onSlowQueriesUpdate(payload.slowQueries ?? []);
-    } catch {
-      setError("Query request failed due to a network issue.");
+
+      if (payload.result.isSlowQuery) {
+        setSlowQueryLog((prev) => {
+          const next = [
+            {
+              sql: payload.result?.executedSql ?? sql,
+              durationMs: payload.result?.durationMs ?? 0,
+              recordedAt: new Date().toISOString()
+            },
+            ...prev
+          ];
+          return next.slice(0, 12);
+        });
+      }
+    } catch (caughtError) {
+      setError(caughtError instanceof Error ? caughtError.message : "Unexpected query error.");
+      setResult(null);
     } finally {
-      setIsLoading(false);
+      setIsRunning(false);
     }
-  };
+  }
+
+  function formatSql() {
+    try {
+      setSql((prev) => format(prev, { language: "postgresql" }));
+      setError(null);
+    } catch {
+      setError("Could not format SQL. Check statement syntax.");
+    }
+  }
 
   return (
-    <section className="rounded-2xl border border-[#29374d] bg-[#101827]/90 p-5">
-      <div className="flex flex-wrap items-center justify-between gap-3">
-        <h2 className="text-lg font-semibold text-white">Query Explorer</h2>
-        <div className="flex items-center gap-2 text-xs text-[#8da5bd]">
-          <label htmlFor="query-limit">Result Limit</label>
-          <input
-            id="query-limit"
-            type="number"
-            min={1}
-            max={500}
-            value={limit}
-            onChange={(event) => setLimit(Number(event.target.value))}
-            className="w-20 rounded border border-[#31435a] bg-[#0f1724] px-2 py-1 text-right text-[#d6e3ef] outline-none"
-          />
+    <Card className="border-[#30363d] bg-[#0f141b]">
+      <CardHeader>
+        <CardTitle className="text-lg">Query Explorer</CardTitle>
+        <CardDescription>
+          Read-only runner for diagnostics (`SELECT`, `WITH`, `EXPLAIN`). Queries without a
+          LIMIT automatically get `LIMIT 200`.
+        </CardDescription>
+      </CardHeader>
+      <CardContent className="space-y-4">
+        <Textarea value={sql} onChange={(event) => setSql(event.target.value)} className="min-h-44" />
+        <div className="flex flex-wrap gap-2">
+          <Button type="button" onClick={runQuery} disabled={isRunning}>
+            {isRunning ? "Running..." : "Run query"}
+          </Button>
+          <Button type="button" variant="secondary" onClick={formatSql}>
+            Format SQL
+          </Button>
         </div>
-      </div>
-      <p className="mt-2 text-xs text-[#89a1ba]">
-        Read-only statements only: SELECT, WITH, and EXPLAIN are allowed. Query responses are briefly cached.
-      </p>
+        {error ? <p className="text-sm text-[#ff8a8a]">{error}</p> : null}
 
-      <div className="mt-4 overflow-hidden rounded-lg border border-[#253347]">
-        <Editor
-          height="260px"
-          defaultLanguage="sql"
-          value={sql}
-          onChange={(value) => setSql(value ?? "")}
-          theme="vs-dark"
-          options={{
-            fontSize: 13,
-            minimap: { enabled: false },
-            scrollBeyondLastLine: false,
-            automaticLayout: true,
-          }}
-        />
-      </div>
+        {result ? (
+          <div className="space-y-4 rounded-lg border border-[#30363d] bg-[#111824] p-4">
+            <div className="flex flex-wrap items-center gap-2 text-sm">
+              <Badge variant={result.isSlowQuery ? "default" : "success"}>
+                {result.isSlowQuery ? "Slow query" : "Healthy runtime"}
+              </Badge>
+              <Badge variant="muted">{result.durationMs} ms</Badge>
+              <Badge variant="muted">{result.rowCount.toLocaleString()} rows</Badge>
+            </div>
+            <p className="text-xs text-[#8b949e] whitespace-pre-wrap">{result.executedSql}</p>
 
-      <div className="mt-4 flex flex-wrap items-center gap-3">
-        <button
-          type="button"
-          onClick={runQuery}
-          disabled={isLoading}
-          className="inline-flex items-center gap-2 rounded-lg bg-[#35c8ff] px-4 py-2 text-sm font-semibold text-[#032435] transition hover:bg-[#60d4ff] disabled:cursor-not-allowed disabled:bg-[#1e495a] disabled:text-[#90b6cb]"
-        >
-          {isLoading ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-          Run Query
-        </button>
-        {error ? <span className="text-xs text-[#f39ca2]">{error}</span> : null}
-      </div>
-
-      {result ? (
-        <div className="mt-5 space-y-3">
-          <div className="flex flex-wrap gap-4 text-xs text-[#8ca5bc]">
-            <span>Rows: {result.rowCount.toLocaleString()}</span>
-            <span>Duration: {result.durationMs}ms</span>
-            <span>Cache: {result.fromCache ? "hit" : "miss"}</span>
-            <span>Executed: {new Date(result.executedAt).toLocaleTimeString()}</span>
-          </div>
-
-          <div className="max-h-[420px] overflow-auto rounded-lg border border-[#253347]">
-            <table className="min-w-full border-collapse text-left text-xs">
-              <thead className="sticky top-0 bg-[#121c2c] text-[#b6c8da]">
-                <tr>
-                  {result.columns.map((column) => (
-                    <th key={column.name} className="border-b border-[#253347] px-3 py-2 font-semibold">
-                      {column.name}
-                    </th>
-                  ))}
-                </tr>
-              </thead>
-              <tbody>
-                {result.rows.map((row, rowIndex) => (
-                  <tr key={`row-${rowIndex}`} className="odd:bg-[#101928] even:bg-[#0f1623]">
-                    {result.columns.map((column) => (
-                      <td
-                        key={`${rowIndex}-${column.name}`}
-                        className="max-w-[340px] border-b border-[#1f2d3f] px-3 py-2 font-mono text-[#d8e5f0]"
-                      >
-                        {formatCell(row[column.name])}
-                      </td>
+            {result.columns.length ? (
+              <Table>
+                <TableHeader>
+                  <TableRow>
+                    {result.columns.map((columnName) => (
+                      <TableHead key={columnName}>{columnName}</TableHead>
                     ))}
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+                  </TableRow>
+                </TableHeader>
+                <TableBody>
+                  {result.rows.slice(0, 50).map((row, index) => (
+                    <TableRow key={index}>
+                      {result.columns.map((columnName) => (
+                        <TableCell key={`${index}-${columnName}`}>
+                          {String(row[columnName] ?? "")}
+                        </TableCell>
+                      ))}
+                    </TableRow>
+                  ))}
+                </TableBody>
+              </Table>
+            ) : (
+              <p className="text-sm text-[#8b949e]">Query returned no tabular columns.</p>
+            )}
           </div>
+        ) : null}
+
+        <div className="rounded-lg border border-[#30363d] bg-[#111824] p-4">
+          <h3 className="text-sm font-semibold text-[#e6edf3]">Slow-query log</h3>
+          <p className="mb-3 mt-1 text-xs text-[#8b949e]">
+            Captures statements that run for 750ms or longer in this browser session.
+          </p>
+
+          {chartData.length ? (
+            <div className="h-52 w-full">
+              <ResponsiveContainer>
+                <BarChart data={chartData}>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#24303d" />
+                  <XAxis dataKey="name" stroke="#8b949e" />
+                  <YAxis stroke="#8b949e" />
+                  <Tooltip
+                    cursor={{ fill: "rgba(47, 129, 247, 0.15)" }}
+                    contentStyle={{
+                      background: "#0f141b",
+                      border: "1px solid #30363d",
+                      color: "#e6edf3"
+                    }}
+                  />
+                  <Bar dataKey="durationMs" fill="#2f81f7" radius={[4, 4, 0, 0]} />
+                </BarChart>
+              </ResponsiveContainer>
+            </div>
+          ) : (
+            <p className="text-sm text-[#8b949e]">No slow queries recorded yet.</p>
+          )}
         </div>
-      ) : null}
-    </section>
+      </CardContent>
+    </Card>
   );
 }
